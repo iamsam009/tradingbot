@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — SharkExchange Trading Bot
+# Runs the bot as a managed service with auto-restart and log persistence
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+  tradingbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tradingbot
+    restart: unless-stopped           # Auto-restart on crash or reboot
+
+    # Load API keys from .env file (never hardcode credentials)
+    env_file:
+      - .env
+
+    # Additional environment overrides (optional)
+    environment:
+      - PYTHONUNBUFFERED=1
+
+    ports:
+      - "5000:5000"                   # Dashboard accessible at http://<EC2-IP>:5000
+
+    volumes:
+      - ./logs:/app/logs              # Persist logs outside container
+      - ./trading_bot.log:/app/trading_bot.log  # Persist main log file
+
+    # Logging config — rotate logs so disk doesn't fill up
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

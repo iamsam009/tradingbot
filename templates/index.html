@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5-Min BB Reversal Bot — BTC/USDT</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>📊 5-Min BB Reversal Bot</h1>
+                <span class="subtitle">BTC/USDT • Bollinger Band (20, 2σ) • Trailing Stop • sharkexchange.in</span>
+            </div>
+            <div class="header-right">
+                <div class="price-display">
+                    <span class="price-label">BTC Price</span>
+                    <span class="price-value" id="current-price">—</span>
+                    <span class="price-inr" id="current-price-inr">—</span>
+                </div>
+                <div class="session-display" id="session-display">
+                    <span class="session-label">Session</span>
+                    <span class="session-value" id="session-status">—</span>
+                    <span class="session-time" id="session-time">—</span>
+                </div>
+                <div class="mode-badge" id="trading-mode">PAPER</div>
+            </div>
+        </header>
+
+        <!-- Next Trade Execution Section -->
+        <div class="next-execution-section" id="next-execution-section">
+            <div class="next-exec-header">
+                <h2>⏰ Next Trade Execution</h2>
+                <span class="ist-clock" id="ist-clock">—</span>
+            </div>
+            <div class="next-exec-grid">
+                <div class="next-exec-item">
+                    <span class="next-exec-label">Current Session</span>
+                    <span class="next-exec-value" id="next-exec-session">—</span>
+                </div>
+                <div class="next-exec-item">
+                    <span class="next-exec-label">Can Trade Now?</span>
+                    <span class="next-exec-value" id="next-exec-can-trade">—</span>
+                </div>
+                <div class="next-exec-item">
+                    <span class="next-exec-label">Next Candle Close</span>
+                    <span class="next-exec-value" id="next-exec-candle">—</span>
+                </div>
+                <div class="next-exec-item">
+                    <span class="next-exec-label">Waiting For</span>
+                    <span class="next-exec-value" id="next-exec-waiting">—</span>
+                </div>
+                <div class="next-exec-item">
+                    <span class="next-exec-label">Next Session Starts</span>
+                    <span class="next-exec-value" id="next-exec-next-session">—</span>
+                </div>
+                <div class="next-exec-item">
+                    <span class="next-exec-label">Time Until Next</span>
+                    <span class="next-exec-value countdown" id="next-exec-countdown">—</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Chart Section -->
+            <div class="chart-section">
+                <div class="chart-header">
+                    <h2>5-Minute Chart with Bollinger Bands</h2>
+                    <div class="bb-values" id="bb-values">
+                        <span>Upper: <b id="bb-upper">—</b></span>
+                        <span>Middle: <b id="bb-middle">—</b></span>
+                        <span>Lower: <b id="bb-lower">—</b></span>
+                    </div>
+                </div>
+                <canvas id="price-chart" width="800" height="400"></canvas>
+            </div>
+
+            <!-- Position & P&L Section -->
+            <div class="info-grid">
+                <!-- Position Card -->
+                <div class="card position-card">
+                    <h3>📍 Current Position</h3>
+                    <div class="position-info" id="position-info">
+                        <div class="pos-row">
+                            <span>Side</span><span id="pos-side">None</span>
+                        </div>
+                        <div class="pos-row">
+                            <span>Entry</span><span id="pos-entry">—</span>
+                        </div>
+                        <div class="pos-row">
+                            <span>Current</span><span id="pos-current">—</span>
+                        </div>
+                        <div class="pos-row">
+                            <span>Trailing Stop</span><span id="pos-stop">—</span>
+                        </div>
+                        <div class="pos-row">
+                            <span>Quantity</span><span id="pos-qty">—</span>
+                        </div>
+                        <div class="pos-row pnl-row">
+                            <span>Unrealized P&L</span><span id="pos-pnl">₹0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Card -->
+                <div class="card risk-card">
+                    <h3>🛡️ Daily Risk (INR)</h3>
+                    <div class="risk-info" id="risk-info">
+                        <div class="risk-row">
+                            <span>Daily P&L</span><span id="risk-pnl">₹0</span>
+                        </div>
+                        <div class="risk-row">
+                            <span>Trades Today</span><span id="risk-trades">0 / 30</span>
+                        </div>
+                        <div class="risk-row">
+                            <span>Loss Limit</span><span id="risk-loss-limit">₹3,000</span>
+                        </div>
+                        <div class="risk-row">
+                            <span>Remaining Loss</span><span id="risk-remaining">₹3,000</span>
+                        </div>
+                        <div class="risk-row">
+                            <span>Remaining Trades</span><span id="risk-remaining-trades">30</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Strategy Card -->
+                <div class="card strategy-card">
+                    <h3>⚙️ Strategy Config</h3>
+                    <div class="strategy-info" id="strategy-info">
+                        <div class="strat-row">
+                            <span>BB Period</span><span id="strat-bb-period">20</span>
+                        </div>
+                        <div class="strat-row">
+                            <span>BB Std Dev</span><span id="strat-bb-std">2</span>
+                        </div>
+                        <div class="strat-row">
+                            <span>Near Threshold</span><span id="strat-threshold">0.2%</span>
+                        </div>
+                        <div class="strat-row">
+                            <span>Trail %</span><span id="strat-trail">0.5%</span>
+                        </div>
+                        <div class="strat-row">
+                            <span>Trade Size</span><span id="strat-trade-size">₹20,000</span>
+                        </div>
+                        <div class="strat-row">
+                            <span>USD/INR</span><span id="strat-usd-inr">83.5</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls Card -->
+                <div class="card controls-card">
+                    <h3>🎮 Controls</h3>
+                    <div class="controls">
+                        <div class="bot-controls">
+                            <button class="btn btn-start" id="btn-start" onclick="startBot()">▶ Start</button>
+                            <button class="btn btn-stop" id="btn-stop" onclick="stopBot()">⏹ Stop</button>
+                        </div>
+                        <div class="direction-controls">
+                            <label>Direction Filter:</label>
+                            <button class="btn btn-dir btn-long" onclick="setDirection('long')">LONG</button>
+                            <button class="btn btn-dir btn-short" onclick="setDirection('short')">SHORT</button>
+                            <button class="btn btn-dir btn-none active" onclick="setDirection('none')">BOTH</button>
+                        </div>
+                        <div class="close-controls">
+                            <button class="btn btn-close" id="btn-close-pos" onclick="closePosition()" disabled>✖ Close
+                                Position</button>
+                        </div>
+                        <div class="bot-status" id="bot-status">
+                            <span class="status-indicator stopped" id="status-dot"></span>
+                            <span id="status-text">Stopped</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- All Pair Prices Section -->
+        <div class="all-prices-section" id="all-prices-section">
+            <div class="all-prices-header">
+                <h2>💰 All Pair Prices (sharkexchange.in)</h2>
+                <span class="prices-update-time" id="prices-update-time">—</span>
+            </div>
+            <div class="prices-grid" id="prices-grid">
+                <div class="prices-loading">Loading prices from sharkexchange.in...</div>
+            </div>
+        </div>
+
+        <!-- Trade History -->
+        <div class="trade-history-section">
+            <h2>📋 Trade History</h2>
+            <div class="trade-table-wrapper">
+                <table class="trade-table" id="trade-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Side</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>Qty (BTC)</th>
+                            <th>P&L (USDT)</th>
+                            <th>P&L (INR)</th>
+                            <th>Reason</th>
+                            <th>Mode</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trade-history-body">
+                        <tr>
+                            <td colspan="9" class="empty-row">No trades yet</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>5-Min BB Reversal Bot • sharkexchange.in only • All data from sharkexchange.in</span>
+            <span id="last-update">Last update: —</span>
+        </footer>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
