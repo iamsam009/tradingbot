@@ -27,7 +27,7 @@
                     <span class="session-value" id="session-status">—</span>
                     <span class="session-time" id="session-time">—</span>
                 </div>
-                <div class="mode-badge" id="trading-mode">PAPER</div>
+                <div class="mode-badge real" id="trading-mode">LIVE</div>
             </div>
         </header>
 
@@ -154,6 +154,25 @@
                     </div>
                 </div>
 
+                <!-- Balance Card -->
+                <div class="card balance-card">
+                    <h3>💰 Account Balance</h3>
+                    <div class="balance-info" id="balance-info">
+                        <div class="balance-row">
+                            <span>Total Equity</span><span id="bal-equity">—</span>
+                        </div>
+                        <div class="balance-row">
+                            <span>Available</span><span id="bal-available">—</span>
+                        </div>
+                        <div class="balance-row">
+                            <span>USDT Balance</span><span id="bal-usdt">—</span>
+                        </div>
+                        <div class="balance-row">
+                            <span>BTC Balance</span><span id="bal-btc">—</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Controls Card -->
                 <div class="card controls-card">
                     <h3>🎮 Controls</h3>
@@ -263,12 +282,11 @@
                             <th>P&L (USDT)</th>
                             <th>P&L (INR)</th>
                             <th>Reason</th>
-                            <th>Mode</th>
                         </tr>
                     </thead>
                     <tbody id="trade-history-body">
                         <tr>
-                            <td colspan="9" class="empty-row">No trades yet</td>
+                            <td colspan="8" class="empty-row">No trades yet</td>
                         </tr>
                     </tbody>
                 </table>
@@ -277,7 +295,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <span>5-Min BB Reversal Bot • sharkexchange.in only • All data from sharkexchange.in</span>
+            <span>5-Min BB Reversal Bot • LIVE Trading • sharkexchange.in</span>
             <span id="last-update">Last update: —</span>
         </footer>
     </div>

@@ -280,7 +280,8 @@ body {
 /* ─── Position Card ─── */
 .pos-row,
 .risk-row,
-.strat-row {
+.strat-row,
+.balance-row {
     display: flex;
     justify-content: space-between;
     padding: 6px 0;
@@ -290,13 +291,15 @@ body {
 
 .pos-row span:first-child,
 .risk-row span:first-child,
-.strat-row span:first-child {
+.strat-row span:first-child,
+.balance-row span:first-child {
     color: #7a8ba8;
 }
 
 .pos-row span:last-child,
 .risk-row span:last-child,
-.strat-row span:last-child {
+.strat-row span:last-child,
+.balance-row span:last-child {
     color: #e0e0e0;
     font-weight: 500;
 }
@@ -658,6 +661,11 @@ body {
     }
 }
 
+/* ─── Balance Card ─── */
+.balance-card {
+    border-left: 4px solid #00ff88;
+}
+
 /* ─── User Interaction: Manual Trade Panel ─── */
 .manual-trade-card {
     border-left: 4px solid #ff9800;
@@ -803,11 +811,11 @@ body {
     transition: 0.3s;
 }
 
-.config-switch input:checked + .config-slider {
+.config-switch input:checked+.config-slider {
     background: #00d4ff;
 }
 
-.config-switch input:checked + .config-slider::before {
+.config-switch input:checked+.config-slider::before {
     transform: translateX(20px);
     background: #000;
 }

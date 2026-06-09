@@ -59,6 +59,14 @@ socket.on('trade_history_update', (data) => {
     updateTradeHistory(data.trades || []);
 });
 
+socket.on('balance_update', (data) => {
+    updateBalanceDisplay(data.balance);
+});
+
+socket.on('exchange_status', (data) => {
+    updateExchangeStatus(data.connected, data.mode);
+});
+
 // ─── State ───
 let chartData = { candles: [], bb: {}, current_price: 0 };
 let lastPrice = 0;
@@ -80,7 +88,7 @@ function requestInitialData() {
             updateStrategyDisplay(data.strategy || {});
             updateRiskDisplay(data.risk || {});
             updateSessionDisplay(data.session || {});
-            updateTradingMode(data.trading_mode || 'PAPER');
+            updateTradingMode(data.trading_mode || 'LIVE');
             updateConfigDisplay(data.config || {});
             updateExchangeStatus(data.exchange_connected, data.trading_mode);
             if (data.strategy && data.strategy.bollinger_bands) {
@@ -382,17 +390,17 @@ function updateSessionDisplay(session) {
 
 function updateTradingMode(mode) {
     const el = document.getElementById('trading-mode');
-    el.textContent = mode;
-    el.className = 'mode-badge ' + (mode === 'PAPER' ? 'paper' : 'real');
+    el.textContent = 'LIVE';
+    el.className = 'mode-badge real';
 }
 
 function updateExchangeStatus(connected, mode) {
     const el = document.getElementById('trading-mode');
-    if (mode === 'REAL' && connected) {
+    if (connected) {
         el.textContent = 'LIVE';
         el.className = 'mode-badge real';
-    } else if (mode === 'PAPER' || !connected) {
-        el.textContent = 'PAPER';
+    } else {
+        el.textContent = 'DISCONNECTED';
         el.className = 'mode-badge paper';
     }
 }
@@ -481,6 +489,20 @@ function updateStrategyDisplay(strategy) {
     }
 }
 
+function updateBalanceDisplay(balance) {
+    if (!balance) return;
+    const safe = (v, dp) => (v != null && !isNaN(v)) ? Number(v).toFixed(dp) : '—';
+    const elEquity = document.getElementById('bal-equity');
+    const elAvail = document.getElementById('bal-available');
+    const elUSDT = document.getElementById('bal-usdt');
+    const elBTC = document.getElementById('bal-btc');
+
+    if (elEquity) elEquity.textContent = balance.total_equity_usd != null ? `$${safe(balance.total_equity_usd, 2)}` : '—';
+    if (elAvail) elAvail.textContent = balance.available_balance_usd != null ? `$${safe(balance.available_balance_usd, 2)}` : '—';
+    if (elUSDT) elUSDT.textContent = balance.usdt_balance != null ? `${safe(balance.usdt_balance, 4)} USDT` : '—';
+    if (elBTC) elBTC.textContent = balance.btc_balance != null ? `${safe(balance.btc_balance, 6)} BTC` : '—';
+}
+
 function updateConfigDisplay(config) {
     if (!config) return;
     // Config is already shown in strategy card
@@ -524,7 +546,7 @@ function updateTradeHistory(trades) {
     const tbody = document.getElementById('trade-history-body');
 
     if (!trades || trades.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty-row">No trades yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
         return;
     }
 
@@ -534,7 +556,6 @@ function updateTradeHistory(trades) {
         const time = new Date(trade.exit_time).toLocaleString();
         const sideClass = trade.side === 'long' ? 'trade-long' : 'trade-short';
         const pnlClass = trade.pnl_usdt >= 0 ? 'trade-profit' : 'trade-loss';
-        const modeText = trade.paper ? 'PAPER' : 'REAL';
 
         return `<tr>
             <td>${time}</td>
@@ -545,7 +566,6 @@ function updateTradeHistory(trades) {
             <td class="${pnlClass}">$${safe(trade.pnl_usdt, 2)}</td>
             <td class="${pnlClass}">₹${safe(trade.pnl_inr, 0)}</td>
             <td>${trade.exit_reason || '—'}</td>
-            <td class="trade-paper">${modeText}</td>
         </tr>`;
     }).join('');
 }

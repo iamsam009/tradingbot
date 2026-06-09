@@ -7,7 +7,7 @@ Handles:
   - Placing initial stop-loss orders
   - Updating trailing stops (cancel old stop, create new one)
   - Closing positions (market order + cancel stop)
-  - Paper trading fallback when exchange is unreachable
+  - REAL TRADING ONLY — no paper/demo mode
 """
 
 import logging
@@ -178,8 +178,7 @@ class TradeManager:
             logger.info(
                 f"Position OPENED: {side} {actual_quantity:.6f} BTC @ ${actual_price:.2f} "
                 f"(₹{actual_sizing['trade_inr']:.0f}). "
-                f"Initial stop: ${initial_stop:.2f}. "
-                f"{'PAPER' if self.exchange.is_paper_trading() else 'REAL'} trade"
+                f"Initial stop: ${initial_stop:.2f}."
             )
 
             return {
@@ -254,8 +253,7 @@ class TradeManager:
 
             logger.info(
                 f"Trailing stop UPDATED: ${old_stop:.2f} → ${new_stop:.2f} "
-                f"({self.position['side']}). "
-                f"{'PAPER' if self.exchange.is_paper_trading() else 'REAL'}"
+                f"({self.position['side']})"
             )
 
             return {
@@ -340,7 +338,6 @@ class TradeManager:
                     'trade_inr': self.position['trade_inr'],
                     'initial_stop': self.position['initial_stop_price'],
                     'final_stop': self.position['trailing_stop_price'],
-                    'paper': self.exchange.is_paper_trading(),
                 }
                 self.trade_history.append(trade_record)
                 if len(self.trade_history) > self.max_history:
@@ -372,8 +369,7 @@ class TradeManager:
             logger.info(
                 f"Position CLOSED: {side} @ exit=${actual_exit_price:.2f}, "
                 f"P&L: ${pnl_usdt:.2f} / ₹{pnl_inr:.0f}. "
-                f"Reason: {reason}. "
-                f"{'PAPER' if self.exchange.is_paper_trading() else 'REAL'}"
+                f"Reason: {reason}"
             )
 
             return {
@@ -432,7 +428,6 @@ class TradeManager:
                 'lowest_price': self.position['lowest_price'],
                 'unrealized_pnl_usdt': unrealized_pnl_usdt,
                 'unrealized_pnl_inr': unrealized_pnl_inr,
-                'paper': self.exchange.is_paper_trading(),
             }
 
     def get_trade_history(self, limit: int = 20) -> list:

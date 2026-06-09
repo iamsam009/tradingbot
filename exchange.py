@@ -267,7 +267,7 @@ class SharkExchangeTrader:
         - 401 → keys are invalid
         """
         if not self.api_key or not self.api_secret:
-            logger.info("No sharkexchange.in API_KEY/API_SECRET configured — using PAPER TRADING mode")
+            logger.warning("No sharkexchange.in API_KEY/API_SECRET configured — trading is DISABLED. Set API_KEY and API_SECRET in .env file.")
             self.connected = False
             return
 
@@ -301,7 +301,7 @@ class SharkExchangeTrader:
                 logger.warning(
                     f"SharkExchange API: keys are valid but IP not whitelisted. "
                     f"Your IP must be whitelisted in your exchange account settings. "
-                    f"Trading will work in PAPER mode until IP is whitelisted."
+                    f"Trading is DISABLED until IP is whitelisted."
                 )
 
             elif status == 401:
@@ -585,17 +585,20 @@ class SharkExchangeTrader:
 class ExchangeManager:
     """
     Unified exchange manager — ALL data from sharkexchange.in ONLY.
+    REAL TRADING ONLY — no paper/demo mode.
 
     - SharkExchangeData: real market data (klines, ticker, exchangeInfo) — public, no auth
-    - SharkExchangeTrader: trading on sharkexchange.in (paper mode if no API key)
+    - SharkExchangeTrader: authenticated trading on sharkexchange.in
     """
 
     def __init__(self):
         self.data_source = SharkExchangeData()
         self.trader = SharkExchangeTrader()
-        self.paper_trades = []
-        mode = "LIVE" if self.trader.is_connected() else "PAPER MODE"
-        logger.info(f"ExchangeManager initialized — data: sharkexchange.in (real), trading: {mode}")
+        if not self.trader.is_connected():
+            logger.warning("ExchangeManager: trader NOT connected — API keys may be missing/invalid. "
+                           "Trading will fail until valid credentials are provided.")
+        else:
+            logger.info("ExchangeManager initialized — data: sharkexchange.in (real), trading: LIVE")
 
     def fetch_ohlcv(self, symbol: str = config.SYMBOL, timeframe: str = config.TIMEFRAME,
                    limit: int = config.DATA_WINDOW):
@@ -620,81 +623,39 @@ class ExchangeManager:
         return ticker.get("price", 0.0)
 
     def create_market_order(self, symbol: str, side: str, quantity: float):
-        """Place a market order (real or paper)."""
-        if self.trader.is_connected():
-            return self.trader.create_market_order(symbol, side, quantity)
-        else:
-            price = self.get_current_price(symbol)
-            paper_order = {
-                'clientOrderId': f"paper_{int(time.time() * 1000)}",
-                'symbol': symbol,
-                'side': side.upper(),
-                'type': 'MARKET',
-                'orderAmount': quantity,
-                'filledAmount': quantity,
-                'price': price,
-                'status': 'FILLED',
-                'time': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                'paper': True,
-            }
-            self.paper_trades.append(paper_order)
-            logger.info(f"PAPER ORDER: {side.upper()} {quantity:.6f} {symbol} @ ${price:.2f}")
-            return paper_order
+        """Place a REAL market order on sharkexchange.in. Raises RuntimeError if not connected."""
+        if not self.trader.is_connected():
+            raise RuntimeError("Cannot place market order: exchange not connected. Check API keys.")
+        return self.trader.create_market_order(symbol, side, quantity)
 
     def create_stop_loss_order(self, symbol: str, side: str, quantity: float,
                                 stop_price: float, limit_price: float = None):
-        """Place a stop-loss order (real or paper)."""
-        if self.trader.is_connected():
-            return self.trader.create_stop_market_order(symbol, side, quantity, stop_price)
-        else:
-            paper_order = {
-                'clientOrderId': f"paper_stop_{int(time.time() * 1000)}",
-                'symbol': symbol,
-                'side': side.upper(),
-                'type': 'STOP_MARKET',
-                'orderAmount': quantity,
-                'stopPrice': stop_price,
-                'status': 'ACTIVE',
-                'time': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                'paper': True,
-            }
-            self.paper_trades.append(paper_order)
-            logger.info(f"PAPER STOP-LOSS: {side.upper()} {quantity:.6f} @ stop=${stop_price:.2f}")
-            return paper_order
+        """Place a REAL stop-loss order on sharkexchange.in. Raises RuntimeError if not connected."""
+        if not self.trader.is_connected():
+            raise RuntimeError("Cannot place stop-loss order: exchange not connected. Check API keys.")
+        return self.trader.create_stop_market_order(symbol, side, quantity, stop_price)
 
     def cancel_order(self, symbol: str, order_id: str):
-        """Cancel an order (real or paper)."""
-        if self.trader.is_connected():
-            return self.trader.cancel_order(symbol, order_id)
-        else:
-            for t in self.paper_trades:
-                if t['clientOrderId'] == order_id:
-                    t['status'] = 'CANCELLED'
-                    logger.info(f"PAPER ORDER CANCELLED: {order_id}")
-                    return t
-            logger.warning(f"Paper order {order_id} not found for cancellation")
-            return None
+        """Cancel a REAL order on sharkexchange.in. Raises RuntimeError if not connected."""
+        if not self.trader.is_connected():
+            raise RuntimeError("Cannot cancel order: exchange not connected. Check API keys.")
+        return self.trader.cancel_order(symbol, order_id)
 
     def fetch_balance(self):
-        """Fetch account balance (real or simulated)."""
-        if self.trader.is_connected():
-            return self.trader.fetch_balance()
-        else:
-            return {
-                'USDT': {'free': config.INITIAL_CAPITAL_INR / config.USD_INR_RATE,
-                          'used': 0.0, 'total': config.INITIAL_CAPITAL_INR / config.USD_INR_RATE},
-                'INR': {'free': config.INITIAL_CAPITAL_INR, 'used': 0.0, 'total': config.INITIAL_CAPITAL_INR},
-            }
+        """Fetch REAL account balance from sharkexchange.in. Raises RuntimeError if not connected."""
+        if not self.trader.is_connected():
+            raise RuntimeError("Cannot fetch balance: exchange not connected. Check API keys.")
+        return self.trader.fetch_balance()
 
     def fetch_positions(self):
-        """Fetch open positions (real or simulated)."""
-        if self.trader.is_connected():
-            return self.trader.fetch_positions()
-        return []
+        """Fetch REAL open positions from sharkexchange.in. Raises RuntimeError if not connected."""
+        if not self.trader.is_connected():
+            raise RuntimeError("Cannot fetch positions: exchange not connected. Check API keys.")
+        return self.trader.fetch_positions()
 
     def is_paper_trading(self) -> bool:
-        """Check if we're in paper trading mode."""
-        return not self.trader.is_connected()
+        """Paper trading is permanently disabled. Always returns False."""
+        return False
 
     def is_connected(self) -> bool:
         """Check if real exchange is connected."""

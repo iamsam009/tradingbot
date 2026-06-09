@@ -175,10 +175,10 @@ def initialize_components(force=False):
         trade_manager = TradeManager(exchange_manager, strategy_engine, risk_manager)
 
         # Log connection status
-        if exchange_manager.is_paper_trading():
-            logger.info("Running in PAPER TRADING mode — real sharkexchange.in prices, simulated orders")
-        else:
+        if exchange_manager.is_connected():
             logger.info("Connected to sharkexchange.in — real trading enabled")
+        else:
+            logger.error("NOT connected to sharkexchange.in — trading will fail. Check API keys in .env")
 
         logger.info("All components initialized successfully")
         return True
@@ -206,14 +206,23 @@ def get_status():
         session = strategy_engine.is_trading_session() if strategy_engine else {'active': False, 'session_name': 'Unknown'}
         next_execution = get_next_trade_execution_time()
 
+        # Fetch real-time balance
+        balance = None
+        if exchange_manager and exchange_manager.is_connected():
+            try:
+                balance = exchange_manager.fetch_balance()
+            except Exception:
+                balance = None
+
         status = {
             'bot_running': bot_running,
             'timestamp': str(datetime.now(timezone.utc)),
-            'trading_mode': 'PAPER' if (exchange_manager and exchange_manager.is_paper_trading()) else 'REAL',
+            'trading_mode': 'REAL',
             'exchange_connected': exchange_manager.is_connected() if exchange_manager else False,
             'data_source': 'sharkexchange.in',
             'session': session,
             'next_execution': next_execution,
+            'balance': balance,
             'strategy': strategy_engine.get_strategy_summary() if strategy_engine else {},
             'position': trade_manager.get_position_info(current_price) if trade_manager else {},
             'risk': risk_manager.get_daily_status() if risk_manager else {},
@@ -449,7 +458,7 @@ def get_config():
         cfg = {
             'symbol': config.SYMBOL,
             'timeframe': config.TIMEFRAME,
-            'trading_mode': os.getenv('TRADING_MODE', 'PAPER'),
+            'trading_mode': 'REAL',
             'trade_amount_inr': config.TRADE_INR,
             'usd_inr_rate': config.USD_INR_RATE,
             'max_daily_loss_inr': config.MAX_DAILY_LOSS_INR,
@@ -524,9 +533,9 @@ def update_config():
 
 @app.route('/api/logs')
 def get_bot_logs():
-    """Get recent bot log entries (last 100 lines)."""
+    """Get recent bot log entries (last 200 lines)."""
     try:
-        log_file = 'trading_bot.log'
+        log_file = config.LOG_FILE
         if not os.path.exists(log_file):
             return jsonify({'success': True, 'logs': [], 'message': 'No log file yet'})
 
@@ -544,6 +553,26 @@ def get_bot_logs():
             'source': log_file,
         })
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ─── Balance Endpoint ───
+
+@app.route('/api/balance')
+def get_balance():
+    """Get real-time account balance from sharkexchange.in."""
+    try:
+        if not exchange_manager or not exchange_manager.is_connected():
+            return jsonify({'success': False, 'error': 'Exchange not connected. Check API keys.'}), 503
+
+        balance = exchange_manager.fetch_balance()
+        return jsonify({
+            'success': True,
+            'balance': balance,
+            'connected': True,
+        })
+    except Exception as e:
+        logger.error(f"Error fetching balance: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -618,6 +647,7 @@ def trading_loop():
     """
     logger.info("Trading loop started")
     consecutive_errors = 0
+    last_balance_fetch = 0
 
     while not shutdown_event.is_set():
         try:
@@ -634,6 +664,9 @@ def trading_loop():
                 logger.warning("Components not ready, skipping cycle")
                 continue
 
+            # Check exchange connection status
+            exchange_connected = exchange_manager.is_connected() if exchange_manager else False
+
             # 1. Update candle data (real BTC prices from sharkexchange.in)
             data_manager.update_candles()
             current_price = data_manager.get_current_price()
@@ -645,8 +678,8 @@ def trading_loop():
             # 2. Check IST trading session
             session = strategy_engine.is_trading_session()
 
-            # Only run trading logic when we have a valid price
-            if current_price > 0.0:
+            # Only run trading logic when we have a valid price AND exchange is connected
+            if current_price > 0.0 and exchange_connected:
                 # 6. Check daily risk limits — close position if limit reached
                 risk_close = risk_manager.should_close_position()
                 if risk_close.get('should_close') and trade_manager.has_open_position():
@@ -658,9 +691,16 @@ def trading_loop():
                 if not trade_manager.has_open_position() and session.get('active'):
                     signal = strategy_engine.check_entry_signal()
                     if signal.get('signal'):
+                        logger.info(f"SIGNAL DETECTED: {signal.get('reason', '')}")
                         result = trade_manager.open_position(signal)
                         if result['success']:
-                            logger.info(f"Trade opened: {result['reason']}")
+                            logger.info(f"Trade OPENED: {result['reason']}")
+                        else:
+                            logger.warning(f"Trade FAILED: {result.get('reason', 'Unknown error')}")
+                    elif signal.get('reason'):
+                        # Log signal rejection for debugging (only every 60s to avoid spam)
+                        if int(time.time()) % 60 < config.LOOP_INTERVAL_SECONDS:
+                            logger.debug(f"No signal: {signal.get('reason')}")
 
                 # 4. Update trailing stop (if position open)
                 if trade_manager.has_open_position():
@@ -676,7 +716,11 @@ def trading_loop():
                             exit_check['reason'], exit_check.get('exit_price', current_price)
                         )
                         if close_result['success']:
-                            logger.info(f"Trade closed: {close_result['exit_reason']}, P&L=Rs.{close_result['pnl_inr']:.0f}")
+                            logger.info(f"Trade CLOSED: {close_result['exit_reason']}, P&L=Rs.{close_result['pnl_inr']:.0f}")
+            elif not exchange_connected:
+                # Log once per minute that we're waiting for connection
+                if int(time.time()) % 60 < config.LOOP_INTERVAL_SECONDS:
+                    logger.warning("Exchange not connected — waiting for valid API keys. Trading is paused.")
 
             # 7. Emit updates to dashboard (always, even when price is 0)
             position_info = trade_manager.get_position_info(current_price)
@@ -691,6 +735,23 @@ def trading_loop():
             socketio.emit('strategy_update', strategy_info)
             socketio.emit('risk_update', risk_info)
             socketio.emit('next_execution_update', next_execution)
+            socketio.emit('exchange_status', {
+                'connected': exchange_connected,
+                'mode': 'REAL',
+            })
+
+            # Fetch and emit balance every 60 seconds (not every loop cycle to avoid API spam)
+            now = time.time()
+            if exchange_connected and (now - last_balance_fetch) >= 60:
+                last_balance_fetch = now
+                try:
+                    balance = exchange_manager.fetch_balance()
+                    socketio.emit('balance_update', {
+                        'balance': balance,
+                        'timestamp': str(datetime.now(timezone.utc)),
+                    })
+                except Exception as bal_err:
+                    logger.error(f"Failed to fetch balance for dashboard: {bal_err}")
 
         except Exception as e:
             consecutive_errors += 1

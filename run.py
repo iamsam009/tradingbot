@@ -3,7 +3,7 @@ Entry point script for the 5-Minute Bollinger Band Reversal Bot with Trailing St
 
 Usage:
     python run.py          # Start the bot with dashboard (real BTC prices from sharkexchange.in)
-    python run.py --test   # Force paper trading mode (real prices, simulated orders)
+    python run.py --test   # Run connection test only (no trading)
 """
 
 import sys
