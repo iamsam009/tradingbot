@@ -15,6 +15,8 @@ Exit Logic:
 """
 
 import logging
+import threading
+import time as _time
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 import config
@@ -27,7 +29,7 @@ IST_TZ = timezone(IST_OFFSET)
 
 
 class TradeDirection(Enum):
-    NONE = "none"
+    BOTH = "both"
     LONG = "long"
     SHORT = "short"
 
@@ -36,26 +38,29 @@ class StrategyEngine:
     """Bollinger Band reversal strategy with IST session filtering."""
 
     def __init__(self, data_manager):
+        self._lock = threading.Lock()
         self.data_manager = data_manager
-        self.direction = TradeDirection.NONE.value
-        self.last_signal_time = 0
+        self.direction = TradeDirection.BOTH.value
+        self.last_signal_time = 0.0
         self.signal_cooldown = 300  # 5 minutes cooldown between signals (one candle)
 
     def set_direction(self, direction: str):
         """Set the allowed trade direction (for manual override)."""
-        if direction in ['long', 'LONG']:
-            self.direction = TradeDirection.LONG.value
-        elif direction in ['short', 'SHORT']:
-            self.direction = TradeDirection.SHORT.value
-        elif direction in ['none', 'NONE', 'both', 'BOTH']:
-            self.direction = TradeDirection.NONE.value  # NONE means allow both
-        else:
-            self.direction = TradeDirection.NONE.value
-        logger.info(f"Trade direction set to: {self.direction}")
+        with self._lock:
+            if direction in ['long', 'LONG']:
+                self.direction = TradeDirection.LONG.value
+            elif direction in ['short', 'SHORT']:
+                self.direction = TradeDirection.SHORT.value
+            elif direction in ['none', 'NONE', 'both', 'BOTH']:
+                self.direction = TradeDirection.BOTH.value  # BOTH means allow both
+            else:
+                self.direction = TradeDirection.BOTH.value
+            logger.info(f"Trade direction set to: {self.direction}")
 
     def get_direction(self) -> str:
         """Get current trade direction setting."""
-        return self.direction
+        with self._lock:
+            return self.direction
 
     # ─── IST Session Checker ───
 
@@ -129,9 +134,9 @@ class StrategyEngine:
                     'session': session,
                 }
 
-            # Check cooldown
-            import time as _time
-            if _time.time() - self.last_signal_time < self.signal_cooldown:
+            # Check cooldown (use monotonic for wall-clock independence)
+            now = _time.monotonic()
+            if now - self.last_signal_time < self.signal_cooldown:
                 return {'signal': False, 'reason': 'Signal cooldown active'}
 
             # Get BB values at the last completed candle
@@ -186,7 +191,7 @@ class StrategyEngine:
                     f"near lower band ({lower_band:.0f}). "
                     f"Distance: {(candle_close - lower_band) / candle_close * 100:.2f}%"
                 )
-                self.last_signal_time = _time.time()
+                self.last_signal_time = _time.monotonic()
                 logger.info(signal_result['reason'])
                 return signal_result
 
@@ -210,7 +215,7 @@ class StrategyEngine:
                     f"near upper band ({upper_band:.0f}). "
                     f"Distance: {(upper_band - candle_close) / candle_close * 100:.2f}%"
                 )
-                self.last_signal_time = _time.time()
+                self.last_signal_time = _time.monotonic()
                 logger.info(signal_result['reason'])
                 return signal_result
 

@@ -166,7 +166,7 @@
                             <label>Direction Filter:</label>
                             <button class="btn btn-dir btn-long" onclick="setDirection('long')">LONG</button>
                             <button class="btn btn-dir btn-short" onclick="setDirection('short')">SHORT</button>
-                            <button class="btn btn-dir btn-none active" onclick="setDirection('none')">BOTH</button>
+                            <button class="btn btn-dir btn-both active" onclick="setDirection('both')">BOTH</button>
                         </div>
                         <div class="close-controls">
                             <button class="btn btn-close" id="btn-close-pos" onclick="closePosition()" disabled>✖ Close
@@ -177,6 +177,62 @@
                             <span id="status-text">Stopped</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- User Interaction System: Manual Trade Panel -->
+                <div class="card manual-trade-card">
+                    <h3>🔧 Manual Trade</h3>
+                    <div class="manual-trade-form">
+                        <div class="manual-trade-row">
+                            <label>Side:</label>
+                            <button class="btn btn-dir btn-long" id="manual-btn-long"
+                                onclick="setManualSide('long')">LONG</button>
+                            <button class="btn btn-dir btn-short" id="manual-btn-short"
+                                onclick="setManualSide('short')">SHORT</button>
+                        </div>
+                        <div class="manual-trade-row">
+                            <label>Price (USDT):</label>
+                            <input type="number" id="manual-price" placeholder="Current price" step="0.01"
+                                class="config-input">
+                            <button class="btn btn-dir btn-both" id="manual-btn-mkt"
+                                onclick="setManualPriceMarket()">Use Market</button>
+                        </div>
+                        <button class="btn btn-start" id="btn-manual-trade" onclick="executeManualTrade()"
+                            style="width:100%;margin-top:8px;">⚡ Execute Trade</button>
+                        <div class="manual-trade-feedback" id="manual-trade-feedback"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- User Interaction System: Config Panel -->
+        <div class="config-section" id="config-section">
+            <div class="config-header">
+                <h2>⚙️ Bot Configuration</h2>
+                <button class="btn btn-dir" onclick="toggleConfigPanel()" id="config-toggle-btn">Show</button>
+            </div>
+            <div class="config-panel" id="config-panel" style="display:none;">
+                <div class="config-grid" id="config-grid">
+                    <div class="config-loading">Loading configuration...</div>
+                </div>
+                <button class="btn btn-start" onclick="saveConfig()" style="margin-top:12px;">💾 Save
+                    Configuration</button>
+                <div class="config-feedback" id="config-feedback"></div>
+            </div>
+        </div>
+
+        <!-- User Interaction System: Log Viewer -->
+        <div class="log-section" id="log-section">
+            <div class="log-header">
+                <h2>📜 Bot Logs</h2>
+                <div class="log-header-actions">
+                    <button class="btn btn-dir" onclick="refreshLogs()">🔄 Refresh</button>
+                    <button class="btn btn-dir" onclick="toggleLogPanel()" id="log-toggle-btn">Show</button>
+                </div>
+            </div>
+            <div class="log-panel" id="log-panel" style="display:none;">
+                <div class="log-viewer" id="log-viewer">
+                    <div class="log-loading">Loading logs...</div>
                 </div>
             </div>
         </div>

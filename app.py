@@ -14,7 +14,11 @@ All data sourced exclusively from sharkexchange.in — NO Binance.
 """
 
 import logging
+import logging.handlers
 import json
+import os
+import signal
+import sys
 import config
 import threading
 import time
@@ -45,6 +49,8 @@ strategy_engine = None
 risk_manager = None
 trade_manager = None
 bot_running = False
+state_lock = threading.Lock()
+shutdown_event = threading.Event()
 
 
 def get_next_trade_execution_time() -> dict:
@@ -257,15 +263,18 @@ def start_bot():
     """Start the trading bot."""
     global bot_running
     try:
-        if not bot_running:
-            if not initialize_components():
-                return jsonify({'success': False, 'reason': 'Failed to initialize'}), 500
-            bot_running = True
-            start_trading_loop()
-            socketio.emit('bot_status', {'running': True})
-            logger.info("Trading bot STARTED")
-            return jsonify({'success': True, 'running': True})
-        return jsonify({'success': True, 'running': True, 'reason': 'Already running'})
+        with state_lock:
+            if not bot_running:
+                if not initialize_components():
+                    return jsonify({'success': False, 'reason': 'Failed to initialize'}), 500
+                bot_running = True
+                shutdown_event.clear()
+            else:
+                return jsonify({'success': True, 'running': True, 'reason': 'Already running'})
+        start_trading_loop()
+        socketio.emit('bot_status', {'running': True})
+        logger.info("Trading bot STARTED")
+        return jsonify({'success': True, 'running': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -275,7 +284,9 @@ def stop_bot():
     """Stop the trading bot."""
     global bot_running
     try:
-        bot_running = False
+        with state_lock:
+            bot_running = False
+        shutdown_event.set()
         socketio.emit('bot_status', {'running': False})
         logger.info("Trading bot STOPPED")
         return jsonify({'success': True, 'running': False})
@@ -382,6 +393,160 @@ def get_all_prices():
         return jsonify({'error': str(e)}), 500
 
 
+# ─── Manual Trade Endpoint ───
+
+@app.route('/api/manual_trade', methods=['POST'])
+def manual_trade():
+    """Place a manual trade (for user interaction system)."""
+    try:
+        body = request.get_json()
+        if not body:
+            return jsonify({'success': False, 'error': 'Missing JSON body'}), 400
+
+        side = body.get('side', '').lower()
+        if side not in ('long', 'short', 'buy', 'sell'):
+            return jsonify({'success': False, 'error': 'Invalid side. Use long/short or buy/sell'}), 400
+
+        # Allow overriding the entry price (optional)
+        entry_price = body.get('price', 0)
+        if entry_price <= 0:
+            entry_price = data_manager.get_current_price()
+
+        if entry_price <= 0:
+            return jsonify({'success': False, 'error': 'Could not determine entry price'}), 400
+
+        # Map to internal signal format the trade_manager expects
+        if side in ('long', 'buy'):
+            signal = {
+                'direction': 'long',
+                'entry_price': entry_price,
+                'reason': 'manual_trade',
+                'bb': data_manager.calculate_bollinger_bands() if data_manager else {},
+            }
+        else:
+            signal = {
+                'direction': 'short',
+                'entry_price': entry_price,
+                'reason': 'manual_trade',
+                'bb': data_manager.calculate_bollinger_bands() if data_manager else {},
+            }
+
+        result = trade_manager.open_position(signal)
+        socketio.emit('position_update', trade_manager.get_position_info(data_manager.get_current_price()))
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Manual trade error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ─── Config Management Endpoint ───
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """Get current bot configuration."""
+    try:
+        cfg = {
+            'symbol': config.SYMBOL,
+            'timeframe': config.TIMEFRAME,
+            'trading_mode': os.getenv('TRADING_MODE', 'PAPER'),
+            'trade_amount_inr': config.TRADE_INR,
+            'usd_inr_rate': config.USD_INR_RATE,
+            'max_daily_loss_inr': config.MAX_DAILY_LOSS_INR,
+            'max_trades_per_day': config.MAX_TRADES_PER_DAY,
+            'bb_period': config.BB_PERIOD,
+            'bb_std': config.BB_STD_DEV,
+            'near_threshold': config.NEAR_THRESHOLD,
+            'trail_pct': config.TRAIL_PCT,
+            'cooldown_minutes': getattr(config, 'COOLDOWN_MINUTES', 5),
+            'close_on_session_end': getattr(config, 'CLOSE_ON_SESSION_END', False),
+        }
+        return jsonify({'success': True, 'config': cfg})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/config', methods=['POST'])
+def update_config():
+    """Update bot configuration at runtime."""
+    try:
+        body = request.get_json()
+        if not body:
+            return jsonify({'success': False, 'error': 'Missing JSON body'}), 400
+
+        updated = []
+        ignored = []
+
+        # Only allow safe runtime-configurable values
+        safe_keys = {
+            'trade_amount_inr': (int, 1000, 100000, 'TRADE_INR'),
+            'max_daily_loss_inr': (int, 500, 50000, 'MAX_DAILY_LOSS_INR'),
+            'max_trades_per_day': (int, 1, 100, 'MAX_TRADES_PER_DAY'),
+            'trail_pct': (float, 0.001, 0.05, 'TRAIL_PCT'),
+            'near_threshold': (float, 0.0005, 0.02, 'NEAR_THRESHOLD'),
+            'cooldown_minutes': (int, 1, 60, 'COOLDOWN_MINUTES'),
+            'close_on_session_end': (bool, None, None, 'CLOSE_ON_SESSION_END'),
+        }
+
+        for key, value in body.items():
+            if key in safe_keys:
+                expected_type, vmin, vmax, attr_name = safe_keys[key]
+                try:
+                    if expected_type == bool:
+                        cast_val = bool(value)
+                    else:
+                        cast_val = expected_type(value)
+
+                    if vmin is not None and cast_val < vmin:
+                        ignored.append(f'{key}: value {cast_val} below min {vmin}')
+                        continue
+                    if vmax is not None and cast_val > vmax:
+                        ignored.append(f'{key}: value {cast_val} above max {vmax}')
+                        continue
+
+                    setattr(config, attr_name, cast_val)
+                    updated.append(key)
+                except (ValueError, TypeError):
+                    ignored.append(f'{key}: invalid type, expected {expected_type.__name__}')
+            else:
+                ignored.append(f'{key}: not runtime-configurable')
+
+        return jsonify({
+            'success': True,
+            'updated': updated,
+            'ignored': ignored,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ─── Bot Logs Endpoint ───
+
+@app.route('/api/logs')
+def get_bot_logs():
+    """Get recent bot log entries (last 100 lines)."""
+    try:
+        log_file = 'trading_bot.log'
+        if not os.path.exists(log_file):
+            return jsonify({'success': True, 'logs': [], 'message': 'No log file yet'})
+
+        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+
+        # Return last 200 lines, newest first
+        recent = lines[-200:] if len(lines) > 200 else lines
+        recent.reverse()
+
+        return jsonify({
+            'success': True,
+            'logs': [line.rstrip('\n\r') for line in recent],
+            'total_lines': len(lines),
+            'source': log_file,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ─── SocketIO Events ───
 
 @socketio.on('connect')
@@ -454,9 +619,16 @@ def trading_loop():
     logger.info("Trading loop started")
     consecutive_errors = 0
 
-    while bot_running:
+    while not shutdown_event.is_set():
         try:
+            with state_lock:
+                if not bot_running:
+                    break
+
             time.sleep(config.LOOP_INTERVAL_SECONDS)
+
+            if shutdown_event.is_set():
+                break
 
             if not data_manager or not trade_manager or not strategy_engine:
                 logger.warning("Components not ready, skipping cycle")
@@ -532,24 +704,49 @@ def trading_loop():
 
 
 def start_trading_loop():
-    """Start the trading loop in a background thread."""
+    """Start the trading loop in a background (non-daemon) thread."""
     global bot_running
-    bot_running = True
-    threading.Thread(target=trading_loop, daemon=True).start()
+    with state_lock:
+        bot_running = True
+    shutdown_event.clear()
+    thread = threading.Thread(target=trading_loop, daemon=False, name="TradingLoop")
+    thread.start()
+    logger.info(f"Trading loop thread started (alive={thread.is_alive()})")
+    return thread
 
 
 # ─── Main Entry ───
 
 if __name__ == '__main__':
-    # Setup logging
+    # Setup logging with rotation (10MB x 5 backup files)
     logging.basicConfig(
         level=config.LOG_LEVEL,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(config.LOG_FILE),
+            logging.handlers.RotatingFileHandler(
+                config.LOG_FILE,
+                maxBytes=10 * 1024 * 1024,  # 10 MB
+                backupCount=5,
+            ),
             logging.StreamHandler()
         ]
     )
+
+    # Register graceful shutdown handler
+    def _graceful_shutdown(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        global bot_running
+        with state_lock:
+            bot_running = False
+        shutdown_event.set()
+        # Save trade history before exit
+        if trade_manager:
+            trade_manager._save_history()
+        logger.info("Shutdown complete")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
 
     # Initialize components
     if initialize_components():

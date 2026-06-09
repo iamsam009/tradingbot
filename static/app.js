@@ -66,6 +66,9 @@ let updateInterval = null;
 let pricesInterval = null;
 let countdownInterval = null;
 let nextExecData = null;
+let manualTradeSide = 'long';
+let configPanelOpen = false;
+let logPanelOpen = false;
 
 // ─── Initial Data Load ───
 function requestInitialData() {
@@ -357,7 +360,8 @@ function updatePriceDisplay(price) {
     if (price && price > 0 && !isNaN(price)) {
         lastPrice = price;
         document.getElementById('current-price').textContent = `$${Number(price).toFixed(2)}`;
-        const inrPrice = price * 83.5;
+        const usdInrRate = window._usdInrRate || 83.5;
+        const inrPrice = price * usdInrRate;
         document.getElementById('current-price-inr').textContent = `₹${Number(inrPrice).toFixed(0)}`;
     }
 }
@@ -459,12 +463,15 @@ function updateRiskDisplay(risk) {
 function updateStrategyDisplay(strategy) {
     if (!strategy) return;
 
+    const usdInrRate = strategy.usd_inr_rate || 83.5;
+    window._usdInrRate = usdInrRate;
+
     document.getElementById('strat-bb-period').textContent = strategy.bb_period || 20;
     document.getElementById('strat-bb-std').textContent = strategy.bb_std || 2;
     document.getElementById('strat-threshold').textContent = `${((strategy.near_threshold || 0.002) * 100).toFixed(1)}%`;
     document.getElementById('strat-trail').textContent = `${((strategy.trail_pct || 0.005) * 100).toFixed(1)}%`;
     document.getElementById('strat-trade-size').textContent = `₹${Number(strategy.trade_inr || 20000).toLocaleString()}`;
-    document.getElementById('strat-usd-inr').textContent = strategy.usd_inr_rate || 83.5;
+    document.getElementById('strat-usd-inr').textContent = usdInrRate;
 
     if (strategy.session) {
         updateSessionDisplay(strategy.session);
@@ -509,7 +516,7 @@ function updateDirectionButtons(direction) {
     } else if (direction === 'short') {
         document.querySelector('.btn-short').classList.add('active');
     } else {
-        document.querySelector('.btn-none').classList.add('active');
+        document.querySelector('.btn-both').classList.add('active');
     }
 }
 
@@ -601,6 +608,231 @@ function closePosition() {
         .catch(err => {
             console.error('Close position error:', err);
             requestInitialData();
+        });
+}
+
+// ─── User Interaction: Manual Trade ───
+
+function setManualSide(side) {
+    manualTradeSide = side;
+    document.getElementById('manual-btn-long').classList.remove('active');
+    document.getElementById('manual-btn-short').classList.remove('active');
+    if (side === 'long') {
+        document.getElementById('manual-btn-long').classList.add('active');
+    } else {
+        document.getElementById('manual-btn-short').classList.add('active');
+    }
+}
+
+function setManualPriceMarket() {
+    document.getElementById('manual-price').value = lastPrice > 0 ? lastPrice.toFixed(2) : '';
+    document.getElementById('manual-price').placeholder = lastPrice > 0 ? `$${lastPrice.toFixed(2)}` : 'Current price';
+}
+
+function executeManualTrade() {
+    const priceInput = document.getElementById('manual-price');
+    const price = parseFloat(priceInput.value) || lastPrice || 0;
+    const feedback = document.getElementById('manual-trade-feedback');
+    const btn = document.getElementById('btn-manual-trade');
+
+    if (price <= 0) {
+        feedback.innerHTML = '<span style="color:#ff4444;">❌ No valid price available. Wait for market data.</span>';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Placing...';
+    feedback.innerHTML = '';
+
+    fetch('/api/manual_trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            side: manualTradeSide,
+            price: price,
+        })
+    })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.textContent = '⚡ Execute Trade';
+            if (data.success) {
+                feedback.innerHTML = `<span style="color:#00ff88;">✅ ${manualTradeSide.toUpperCase()} trade placed at $${price.toFixed(2)}</span>`;
+                requestInitialData();
+            } else {
+                feedback.innerHTML = `<span style="color:#ff4444;">❌ ${data.error || data.reason || 'Trade failed'}</span>`;
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.textContent = '⚡ Execute Trade';
+            feedback.innerHTML = `<span style="color:#ff4444;">❌ Network error: ${err.message}</span>`;
+        });
+}
+
+// ─── User Interaction: Config Panel ───
+
+function toggleConfigPanel() {
+    configPanelOpen = !configPanelOpen;
+    const panel = document.getElementById('config-panel');
+    const btn = document.getElementById('config-toggle-btn');
+    if (configPanelOpen) {
+        panel.style.display = 'block';
+        btn.textContent = 'Hide';
+        fetchConfig();
+    } else {
+        panel.style.display = 'none';
+        btn.textContent = 'Show';
+    }
+}
+
+function fetchConfig() {
+    fetch('/api/config')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success && data.config) {
+                renderConfig(data.config);
+            }
+        })
+        .catch(err => console.error('Config fetch error:', err));
+}
+
+function renderConfig(cfg) {
+    const grid = document.getElementById('config-grid');
+
+    const fields = [
+        { key: 'trade_amount_inr', label: 'Trade Amount (₹)', type: 'number', min: 1000, max: 100000, step: 1000 },
+        { key: 'max_daily_loss_inr', label: 'Max Daily Loss (₹)', type: 'number', min: 500, max: 50000, step: 500 },
+        { key: 'max_trades_per_day', label: 'Max Trades/Day', type: 'number', min: 1, max: 100, step: 1 },
+        { key: 'trail_pct', label: 'Trail %', type: 'number', min: 0.001, max: 0.05, step: 0.001 },
+        { key: 'near_threshold', label: 'BB Near Threshold %', type: 'number', min: 0.0005, max: 0.02, step: 0.0005 },
+        { key: 'cooldown_minutes', label: 'Cooldown (min)', type: 'number', min: 1, max: 60, step: 1 },
+        { key: 'close_on_session_end', label: 'Close on Session End', type: 'checkbox' },
+    ];
+
+    // Also show read-only fields
+    const roFields = [
+        { key: 'symbol', label: 'Symbol' },
+        { key: 'timeframe', label: 'Timeframe' },
+        { key: 'trading_mode', label: 'Trading Mode' },
+        { key: 'usd_inr_rate', label: 'USD/INR Rate' },
+        { key: 'bb_period', label: 'BB Period' },
+        { key: 'bb_std', label: 'BB Std Dev' },
+    ];
+
+    let html = '';
+    fields.forEach(f => {
+        const val = cfg[f.key] !== undefined ? cfg[f.key] : '';
+        if (f.type === 'checkbox') {
+            html += `<div class="config-row">
+                <span class="config-label">${f.label}</span>
+                <label class="config-switch">
+                    <input type="checkbox" id="cfg-${f.key}" ${val ? 'checked' : ''}>
+                    <span class="config-slider"></span>
+                </label>
+            </div>`;
+        } else {
+            html += `<div class="config-row">
+                <span class="config-label">${f.label}</span>
+                <input type="${f.type}" id="cfg-${f.key}" value="${val}" min="${f.min || ''}" max="${f.max || ''}" step="${f.step || ''}" class="config-input">
+            </div>`;
+        }
+    });
+
+    roFields.forEach(f => {
+        html += `<div class="config-row">
+            <span class="config-label">${f.label} <small>(read-only)</small></span>
+            <input type="text" value="${cfg[f.key] || '—'}" disabled class="config-input config-readonly">
+        </div>`;
+    });
+
+    grid.innerHTML = html;
+}
+
+function saveConfig() {
+    const feedback = document.getElementById('config-feedback');
+    const payload = {};
+
+    // Collect editable fields
+    const fields = ['trade_amount_inr', 'max_daily_loss_inr', 'max_trades_per_day', 'trail_pct', 'near_threshold', 'cooldown_minutes'];
+    fields.forEach(key => {
+        const el = document.getElementById('cfg-' + key);
+        if (el) {
+            payload[key] = el.type === 'number' ? parseFloat(el.value) : el.value;
+        }
+    });
+
+    // Checkbox
+    const cbEl = document.getElementById('cfg-close_on_session_end');
+    if (cbEl) {
+        payload['close_on_session_end'] = cbEl.checked;
+    }
+
+    feedback.innerHTML = '<span style="color:#ffd700;">⏳ Saving...</span>';
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                feedback.innerHTML = `<span style="color:#00ff88;">✅ Saved: ${data.updated.join(', ') || 'no changes'}</span>`;
+                if (data.ignored && data.ignored.length > 0) {
+                    feedback.innerHTML += `<br><span style="color:#ff9800;">⚠️ Ignored: ${data.ignored.join('; ')}</span>`;
+                }
+            } else {
+                feedback.innerHTML = `<span style="color:#ff4444;">❌ ${data.error}</span>`;
+            }
+        })
+        .catch(err => {
+            feedback.innerHTML = `<span style="color:#ff4444;">❌ Network error: ${err.message}</span>`;
+        });
+}
+
+// ─── User Interaction: Log Viewer ───
+
+function toggleLogPanel() {
+    logPanelOpen = !logPanelOpen;
+    const panel = document.getElementById('log-panel');
+    const btn = document.getElementById('log-toggle-btn');
+    if (logPanelOpen) {
+        panel.style.display = 'block';
+        btn.textContent = 'Hide';
+        refreshLogs();
+    } else {
+        panel.style.display = 'none';
+        btn.textContent = 'Show';
+    }
+}
+
+function refreshLogs() {
+    const viewer = document.getElementById('log-viewer');
+    viewer.innerHTML = '<div class="log-loading">Loading logs...</div>';
+
+    fetch('/api/logs')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success && data.logs) {
+                if (data.logs.length === 0) {
+                    viewer.innerHTML = '<div class="log-empty">No log entries yet.</div>';
+                } else {
+                    viewer.innerHTML = data.logs.map(line => {
+                        let cls = 'log-line';
+                        if (line.includes('ERROR') || line.includes('CRITICAL')) cls += ' log-error';
+                        else if (line.includes('WARNING')) cls += ' log-warn';
+                        else if (line.includes('SUCCESS') || line.includes('profit')) cls += ' log-success';
+                        const escaped = line.replace(/</g, '<').replace(/>/g, '>');
+                        return `<div class="${cls}">${escaped}</div>`;
+                    }).join('');
+                }
+            } else {
+                viewer.innerHTML = `<div class="log-error">Error: ${data.error || 'Unknown'}</div>`;
+            }
+        })
+        .catch(err => {
+            viewer.innerHTML = `<div class="log-error">Network error: ${err.message}</div>`;
         });
 }
 

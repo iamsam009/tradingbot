@@ -3,8 +3,6 @@
 # Runs the bot as a managed service with auto-restart and log persistence
 # ─────────────────────────────────────────────────────────────────────────────
 
-version: "3.9"
-
 services:
   tradingbot:
     build:

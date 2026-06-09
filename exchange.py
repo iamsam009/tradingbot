@@ -15,6 +15,7 @@ import json
 import hmac
 import hashlib
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
 import config
 
@@ -152,15 +153,18 @@ class SharkExchangeData:
 
         The ticker24Hr endpoint does NOT exist on this exchange.
         We derive the current price from the latest 1m kline candle instead.
+        Fetches 2 candles so we can also compute 24h change.
         """
         try:
-            candles = self.fetch_ohlcv(pair=symbol, interval="1m", limit=1)
+            candles = self.fetch_ohlcv(pair=symbol, interval="1m", limit=2)
             if candles and len(candles) > 0:
                 price = candles[-1]["close"]
+                prev_price = candles[-2]["close"] if len(candles) >= 2 else price
+                change_pct = ((price - prev_price) / prev_price * 100) if prev_price > 0 else 0.0
                 return {
                     "symbol": symbol,
                     "price": price,
-                    "priceChangePercent": 0.0,
+                    "priceChangePercent": round(change_pct, 2),
                     "volume": candles[-1].get("volume", 0),
                     "quoteVolume": 0.0,
                     "timestamp": int(time.time() * 1000),
@@ -171,10 +175,10 @@ class SharkExchangeData:
             return {"symbol": symbol, "price": 0.0, "timestamp": 0}
 
     def fetch_all_tickers(self):
-        """Fetch prices for known trading pairs from sharkexchange.in.
+        """Fetch prices for known trading pairs from sharkexchange.in (parallelized).
 
         Since ticker24Hr is not available, we fetch 1m klines for each known pair.
-        Falls back to known pairs list.
+        Uses ThreadPoolExecutor to parallelize requests — dramatically faster.
         """
         known_pairs = [
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
@@ -182,14 +186,15 @@ class SharkExchangeData:
             "BTCINR", "ETHINR", "SOLINR",
         ]
         tickers = {}
-        for pair in known_pairs:
+
+        def _fetch_one(pair):
             try:
                 candles = self.fetch_ohlcv(pair=pair, interval="1m", limit=2)
                 if candles and len(candles) >= 1:
                     price = candles[-1]["close"]
                     prev_price = candles[-2]["close"] if len(candles) >= 2 else price
                     change_pct = ((price - prev_price) / prev_price * 100) if prev_price > 0 else 0
-                    tickers[pair] = {
+                    return pair, {
                         "symbol": pair,
                         "price": price,
                         "priceChangePercent": round(change_pct, 2),
@@ -197,6 +202,15 @@ class SharkExchangeData:
                     }
             except Exception as e:
                 logger.debug(f"Failed to fetch {pair}: {e}")
+            return pair, None
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(_fetch_one, pair): pair for pair in known_pairs}
+            for future in as_completed(futures):
+                pair, result = future.result()
+                if result is not None:
+                    tickers[pair] = result
+
         return tickers
 
     def fetch_exchange_info(self):
@@ -474,7 +488,11 @@ class SharkExchangeTrader:
         return None
 
     def create_stop_market_order(self, symbol: str, side: str, quantity: float, stop_price: float):
-        """Place a stop-market order on sharkexchange.in."""
+        """Place a stop-market (reduce-only) order on sharkexchange.in.
+
+        Uses reduceOnly: True so the stop order only reduces/closes an existing
+        position rather than opening a new one in the opposite direction.
+        """
         if not self.connected:
             return None
 
@@ -491,7 +509,7 @@ class SharkExchangeTrader:
             "symbol": symbol,
             "type": "STOP_MARKET",
             "stopPrice": stop_price,
-            "reduceOnly": False,
+            "reduceOnly": True,
             "marginAsset": margin_asset,
         }
 

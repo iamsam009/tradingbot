@@ -18,8 +18,6 @@ WORKDIR /app
 
 # Install OS dependencies (needed by some Python packages)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

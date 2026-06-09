@@ -12,9 +12,15 @@ Handles:
 
 import logging
 import time
+import json
+import os
+import threading
 import config
 
 logger = logging.getLogger(__name__)
+
+# Path for trade history file
+TRADE_HISTORY_FILE = "trade_history.json"
 
 
 class TradeManager:
@@ -24,6 +30,7 @@ class TradeManager:
         self.exchange = exchange
         self.strategy = strategy
         self.risk_manager = risk_manager
+        self._lock = threading.Lock()
 
         # Current position state
         self.position = {
@@ -46,11 +53,16 @@ class TradeManager:
         self.trade_history = []
         self.max_history = 100
 
+        # Load persisted trade history
+        self._load_history()
+
     def has_open_position(self) -> bool:
         """Check if there's an open position."""
-        return self.position.get('open', False)
+        with self._lock:
+            return self.position.get('open', False)
 
     def calculate_position_size(self, entry_price: float) -> dict:
+        """Calculate position size based on INR trade amount (thread-safe)."""
         """
         Calculate position size based on INR trade amount.
         
@@ -90,28 +102,29 @@ class TradeManager:
         Returns dict with success, reason, position info.
         """
         try:
-            if self.has_open_position():
-                return {'success': False, 'reason': 'Position already open'}
+            with self._lock:
+                if self.has_open_position():
+                    return {'success': False, 'reason': 'Position already open'}
 
-            # 1. Check risk limits
-            risk_check = self.risk_manager.can_trade()
-            if not risk_check['allowed']:
-                return {'success': False, 'reason': risk_check['reason']}
+                # 1. Check risk limits
+                risk_check = self.risk_manager.can_trade()
+                if not risk_check['allowed']:
+                    return {'success': False, 'reason': risk_check['reason']}
 
-            side = signal.get('side', '')
-            entry_price = signal.get('entry_price', 0)
+                side = signal.get('side', '')
+                entry_price = signal.get('entry_price', 0)
 
-            if not side or entry_price == 0:
-                return {'success': False, 'reason': 'Invalid signal'}
+                if not side or entry_price == 0:
+                    return {'success': False, 'reason': 'Invalid signal'}
 
-            # 2. Calculate position size
-            sizing = self.calculate_position_size(entry_price)
-            quantity = sizing['quantity_btc']
+                # 2. Calculate position size
+                sizing = self.calculate_position_size(entry_price)
+                quantity = sizing['quantity_btc']
 
-            if quantity == 0:
-                return {'success': False, 'reason': 'Position size is zero'}
+                if quantity == 0:
+                    return {'success': False, 'reason': 'Position size is zero'}
 
-            # 3. Place market entry order
+            # 3. Place market entry order (API call — do outside lock)
             order_side = 'buy' if side == 'long' else 'sell'
             entry_order = self.exchange.create_market_order(config.SYMBOL, order_side, quantity)
 
@@ -133,7 +146,7 @@ class TradeManager:
             else:
                 initial_stop = actual_price * (1 + config.TRAIL_PCT)
 
-            # 5. Place stop-loss order
+            # 5. Place stop-loss order (API call — do outside lock)
             stop_side = 'sell' if side == 'long' else 'buy'
             stop_order = self.exchange.create_stop_loss_order(
                 config.SYMBOL, stop_side, actual_quantity, initial_stop
@@ -141,8 +154,9 @@ class TradeManager:
 
             stop_order_id = stop_order.get('id', '') if stop_order else ''
 
-            # 6. Update position state
-            self.position = {
+            # 6. Update position state under lock
+            with self._lock:
+                self.position = {
                 'open': True,
                 'side': side,
                 'entry_price': actual_price,
@@ -158,8 +172,8 @@ class TradeManager:
                 'entry_order_id': entry_order.get('id', ''),
             }
 
-            # Record trade entry in risk manager
-            self.risk_manager.record_trade_entry()
+                # Record trade entry in risk manager
+                self.risk_manager.record_trade_entry()
 
             logger.info(
                 f"Position OPENED: {side} {actual_quantity:.6f} BTC @ ${actual_price:.2f} "
@@ -192,43 +206,51 @@ class TradeManager:
         Returns dict with updated, new_stop, etc.
         """
         try:
-            if not self.has_open_position():
-                return {'updated': False, 'reason': 'No open position'}
+            with self._lock:
+                if not self.has_open_position():
+                    return {'updated': False, 'reason': 'No open position'}
 
             current_price = self.exchange.get_current_price(config.SYMBOL)
             if current_price == 0:
                 return {'updated': False, 'reason': 'Cannot get current price'}
 
-            # Calculate new trailing stop
-            trail_result = self.strategy.update_trailing_stop(self.position, current_price)
+            # Calculate new trailing stop using snapshot under lock
+            with self._lock:
+                pos_snapshot = self.position.copy()
+            trail_result = self.strategy.update_trailing_stop(pos_snapshot, current_price)
 
             if not trail_result.get('updated'):
                 # Just update highest/lowest tracking even if stop didn't move
-                self.position['highest_price'] = trail_result.get('highest_price', self.position['highest_price'])
-                self.position['lowest_price'] = trail_result.get('lowest_price', self.position['lowest_price'])
+                with self._lock:
+                    self.position['highest_price'] = trail_result.get('highest_price', self.position['highest_price'])
+                    self.position['lowest_price'] = trail_result.get('lowest_price', self.position['lowest_price'])
                 return trail_result
 
             new_stop = trail_result['new_stop']
             old_stop = trail_result['old_stop']
 
-            # Cancel old stop order
-            if self.position.get('stop_order_id'):
-                self.exchange.cancel_order(config.SYMBOL, self.position['stop_order_id'])
+            # Cancel old stop order (API call — outside lock)
+            with self._lock:
+                old_stop_id = self.position.get('stop_order_id')
+            if old_stop_id:
+                self.exchange.cancel_order(config.SYMBOL, old_stop_id)
 
-            # Create new stop order
-            stop_side = 'sell' if self.position['side'] == 'long' else 'buy'
-            quantity = self.position['quantity']
+            # Create new stop order (API call — outside lock)
+            with self._lock:
+                stop_side = 'sell' if self.position['side'] == 'long' else 'buy'
+                quantity = self.position['quantity']
             new_stop_order = self.exchange.create_stop_loss_order(
                 config.SYMBOL, stop_side, quantity, new_stop
             )
 
             new_stop_id = new_stop_order.get('id', '') if new_stop_order else ''
 
-            # Update position state
-            self.position['trailing_stop_price'] = new_stop
-            self.position['stop_order_id'] = new_stop_id
-            self.position['highest_price'] = trail_result.get('highest_price', self.position['highest_price'])
-            self.position['lowest_price'] = trail_result.get('lowest_price', self.position['lowest_price'])
+            # Update position state under lock
+            with self._lock:
+                self.position['trailing_stop_price'] = new_stop
+                self.position['stop_order_id'] = new_stop_id
+                self.position['highest_price'] = trail_result.get('highest_price', self.position['highest_price'])
+                self.position['lowest_price'] = trail_result.get('lowest_price', self.position['lowest_price'])
 
             logger.info(
                 f"Trailing stop UPDATED: ${old_stop:.2f} → ${new_stop:.2f} "
@@ -266,12 +288,13 @@ class TradeManager:
         Returns dict with success, pnl, exit_reason, etc.
         """
         try:
-            if not self.has_open_position():
-                return {'success': False, 'reason': 'No open position'}
+            with self._lock:
+                if not self.has_open_position():
+                    return {'success': False, 'reason': 'No open position'}
 
-            side = self.position['side']
-            entry_price = self.position['entry_price']
-            quantity = self.position['quantity']
+                side = self.position['side']
+                entry_price = self.position['entry_price']
+                quantity = self.position['quantity']
 
             # Use provided exit price or get current price
             if exit_price == 0:
@@ -279,11 +302,13 @@ class TradeManager:
             if exit_price == 0:
                 exit_price = entry_price  # Fallback
 
-            # 1. Cancel stop-loss order
-            if self.position.get('stop_order_id'):
-                self.exchange.cancel_order(config.SYMBOL, self.position['stop_order_id'])
+            # 1. Cancel stop-loss order (API call — outside lock)
+            with self._lock:
+                old_stop_id = self.position.get('stop_order_id')
+            if old_stop_id:
+                self.exchange.cancel_order(config.SYMBOL, old_stop_id)
 
-            # 2. Place market exit order
+            # 2. Place market exit order (API call — outside lock)
             exit_side = 'sell' if side == 'long' else 'buy'
             exit_order = self.exchange.create_market_order(config.SYMBOL, exit_side, quantity)
 
@@ -300,31 +325,32 @@ class TradeManager:
 
             pnl_inr = pnl_usdt * config.USD_INR_RATE
 
-            # 4. Record in trade history
-            trade_record = {
-                'entry_time': self.position['entry_time'],
-                'exit_time': int(time.time() * 1000),
-                'side': side,
-                'entry_price': entry_price,
-                'exit_price': actual_exit_price,
-                'quantity': quantity,
-                'pnl_usdt': pnl_usdt,
-                'pnl_inr': pnl_inr,
-                'exit_reason': reason,
-                'trade_inr': self.position['trade_inr'],
-                'initial_stop': self.position['initial_stop_price'],
-                'final_stop': self.position['trailing_stop_price'],
-                'paper': self.exchange.is_paper_trading(),
-            }
-            self.trade_history.append(trade_record)
-            if len(self.trade_history) > self.max_history:
-                self.trade_history = self.trade_history[-self.max_history:]
+            # 4. Record in trade history under lock
+            with self._lock:
+                trade_record = {
+                    'entry_time': self.position['entry_time'],
+                    'exit_time': int(time.time() * 1000),
+                    'side': side,
+                    'entry_price': entry_price,
+                    'exit_price': actual_exit_price,
+                    'quantity': quantity,
+                    'pnl_usdt': pnl_usdt,
+                    'pnl_inr': pnl_inr,
+                    'exit_reason': reason,
+                    'trade_inr': self.position['trade_inr'],
+                    'initial_stop': self.position['initial_stop_price'],
+                    'final_stop': self.position['trailing_stop_price'],
+                    'paper': self.exchange.is_paper_trading(),
+                }
+                self.trade_history.append(trade_record)
+                if len(self.trade_history) > self.max_history:
+                    self.trade_history = self.trade_history[-self.max_history:]
 
-            # 5. Record P&L in risk manager
-            self.risk_manager.record_trade_exit(pnl_usdt)
+                # 5. Record P&L in risk manager
+                self.risk_manager.record_trade_exit(pnl_usdt)
 
-            # 6. Reset position state
-            self.position = {
+                # 6. Reset position state
+                self.position = {
                 'open': False,
                 'side': '',
                 'entry_price': 0.0,
@@ -339,6 +365,9 @@ class TradeManager:
                 'stop_order_id': '',
                 'entry_order_id': '',
             }
+
+                # Persist trade history after closing
+                self._save_history()
 
             logger.info(
                 f"Position CLOSED: {side} @ exit=${actual_exit_price:.2f}, "
@@ -361,50 +390,77 @@ class TradeManager:
             return {'success': False, 'reason': f'Error: {str(e)}'}
 
     def get_position_info(self, current_price: float = 0) -> dict:
-        """Get current position info for dashboard."""
-        if not self.has_open_position():
+        """Get current position info for dashboard (thread-safe)."""
+        with self._lock:
+            if not self.has_open_position():
+                return {
+                    'open': False,
+                    'side': '',
+                    'entry_price': 0,
+                    'current_price': current_price,
+                    'unrealized_pnl_usdt': 0,
+                    'unrealized_pnl_inr': 0,
+                    'trailing_stop_price': 0,
+                    'quantity': 0,
+                }
+
+            if current_price == 0:
+                current_price = self.exchange.get_current_price(config.SYMBOL)
+
+            entry_price = self.position['entry_price']
+            quantity = self.position['quantity']
+            side = self.position['side']
+
+            # Unrealized P&L
+            if side == 'long':
+                unrealized_pnl_usdt = (current_price - entry_price) * quantity
+            else:
+                unrealized_pnl_usdt = (entry_price - current_price) * quantity
+
+            unrealized_pnl_inr = unrealized_pnl_usdt * config.USD_INR_RATE
+
             return {
-                'open': False,
-                'side': '',
-                'entry_price': 0,
+                'open': True,
+                'side': side,
+                'entry_price': entry_price,
                 'current_price': current_price,
-                'unrealized_pnl_usdt': 0,
-                'unrealized_pnl_inr': 0,
-                'trailing_stop_price': 0,
-                'quantity': 0,
+                'quantity': quantity,
+                'trade_inr': self.position['trade_inr'],
+                'trailing_stop_price': self.position['trailing_stop_price'],
+                'initial_stop_price': self.position['initial_stop_price'],
+                'highest_price': self.position['highest_price'],
+                'lowest_price': self.position['lowest_price'],
+                'unrealized_pnl_usdt': unrealized_pnl_usdt,
+                'unrealized_pnl_inr': unrealized_pnl_inr,
+                'paper': self.exchange.is_paper_trading(),
             }
-
-        if current_price == 0:
-            current_price = self.exchange.get_current_price(config.SYMBOL)
-
-        entry_price = self.position['entry_price']
-        quantity = self.position['quantity']
-        side = self.position['side']
-
-        # Unrealized P&L
-        if side == 'long':
-            unrealized_pnl_usdt = (current_price - entry_price) * quantity
-        else:
-            unrealized_pnl_usdt = (entry_price - current_price) * quantity
-
-        unrealized_pnl_inr = unrealized_pnl_usdt * config.USD_INR_RATE
-
-        return {
-            'open': True,
-            'side': side,
-            'entry_price': entry_price,
-            'current_price': current_price,
-            'quantity': quantity,
-            'trade_inr': self.position['trade_inr'],
-            'trailing_stop_price': self.position['trailing_stop_price'],
-            'initial_stop_price': self.position['initial_stop_price'],
-            'highest_price': self.position['highest_price'],
-            'lowest_price': self.position['lowest_price'],
-            'unrealized_pnl_usdt': unrealized_pnl_usdt,
-            'unrealized_pnl_inr': unrealized_pnl_inr,
-            'paper': self.exchange.is_paper_trading(),
-        }
 
     def get_trade_history(self, limit: int = 20) -> list:
         """Get recent trade history."""
         return self.trade_history[-limit:]
+
+    # ─── Trade History Persistence ───
+
+    def _save_history(self):
+        """Persist trade history to JSON file."""
+        try:
+            with self._lock:
+                history = list(self.trade_history)
+            with open(TRADE_HISTORY_FILE, 'w') as f:
+                json.dump(history, f, indent=2)
+            logger.debug(f"Trade history saved: {len(history)} trades")
+        except Exception as e:
+            logger.error(f"Failed to save trade history: {e}")
+
+    def _load_history(self):
+        """Load trade history from JSON file."""
+        try:
+            if os.path.exists(TRADE_HISTORY_FILE):
+                with open(TRADE_HISTORY_FILE, 'r') as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, list):
+                    with self._lock:
+                        self.trade_history = loaded[-self.max_history:]
+                    logger.info(f"Trade history loaded: {len(self.trade_history)} trades")
+        except Exception as e:
+            logger.error(f"Failed to load trade history: {e}")

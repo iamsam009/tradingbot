@@ -70,6 +70,8 @@ TRADE_INR = 20000
 USD_INR_RATE = 83.5
 MAX_DAILY_LOSS_INR = 3000
 MAX_TRADES_PER_DAY = 30
+COOLDOWN_MINUTES = 5
+CLOSE_ON_SESSION_END = False
 
 TRADING_SESSIONS = [
     {"name": "Morning",   "start_hour": 9,  "start_min": 30, "end_hour": 12, "end_min": 0},

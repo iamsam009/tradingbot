@@ -26,16 +26,14 @@ class DataManager:
         self._initialize_data()
 
     def _initialize_data(self):
-        """Fetch initial candle data on startup."""
+        """Fetch initial candle data on startup (non-blocking)."""
         try:
             self._fetch_and_store_5m(limit=config.DATA_WINDOW)
             count = len(self.candles_5m)
             if count == 0:
-                logger.warning("No initial candle data — sharkexchange.in may be unreachable. Retrying in 5s...")
-                time.sleep(5)
-                self._fetch_and_store_5m(limit=config.DATA_WINDOW)
-                count = len(self.candles_5m)
-            logger.info(f"Initial data loaded: {count} 5m candles from sharkexchange.in")
+                logger.warning("No initial candle data — sharkexchange.in may be unreachable. Will retry on next cycle.")
+            else:
+                logger.info(f"Initial data loaded: {count} 5m candles from sharkexchange.in")
         except Exception as e:
             logger.error(f"Failed to load initial data: {e}")
 

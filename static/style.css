@@ -657,3 +657,247 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* ─── User Interaction: Manual Trade Panel ─── */
+.manual-trade-card {
+    border-left: 4px solid #ff9800;
+}
+
+.manual-trade-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.manual-trade-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.manual-trade-row label {
+    font-size: 13px;
+    color: #7a8ba8;
+    min-width: 90px;
+}
+
+.config-input {
+    background: #1a2332;
+    border: 1px solid #2a3a52;
+    color: #e0e0e0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    flex: 1;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.config-input:focus {
+    border-color: #00d4ff;
+}
+
+.config-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.config-readonly {
+    color: #7a8ba8;
+    font-style: italic;
+}
+
+.manual-trade-feedback,
+.config-feedback {
+    font-size: 13px;
+    margin-top: 6px;
+    min-height: 20px;
+    line-height: 1.4;
+}
+
+/* ─── User Interaction: Config Panel ─── */
+.config-section {
+    background: #131a2a;
+    border-radius: 12px;
+    padding: 16px 24px;
+    margin-top: 16px;
+    border: 1px solid #1e2d4a;
+    border-left: 4px solid #00d4ff;
+}
+
+.config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.config-header h2 {
+    font-size: 16px;
+    color: #00d4ff;
+}
+
+.config-panel {
+    margin-top: 12px;
+}
+
+.config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.config-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #1a2332;
+    padding: 8px 12px;
+    border-radius: 8px;
+}
+
+.config-label {
+    font-size: 13px;
+    color: #7a8ba8;
+    min-width: 160px;
+}
+
+.config-label small {
+    color: #555;
+    font-size: 10px;
+}
+
+.config-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.config-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.config-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #2a3a52;
+    border-radius: 24px;
+    transition: 0.3s;
+}
+
+.config-slider::before {
+    content: '';
+    position: absolute;
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: #7a8ba8;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+.config-switch input:checked + .config-slider {
+    background: #00d4ff;
+}
+
+.config-switch input:checked + .config-slider::before {
+    transform: translateX(20px);
+    background: #000;
+}
+
+.config-loading {
+    color: #7a8ba8;
+    padding: 20px;
+    text-align: center;
+    grid-column: 1 / -1;
+}
+
+/* ─── User Interaction: Log Viewer ─── */
+.log-section {
+    background: #131a2a;
+    border-radius: 12px;
+    padding: 16px 24px;
+    margin-top: 16px;
+    border: 1px solid #1e2d4a;
+    border-left: 4px solid #888;
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.log-header h2 {
+    font-size: 16px;
+    color: #888;
+}
+
+.log-header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.log-panel {
+    margin-top: 12px;
+}
+
+.log-viewer {
+    background: #0a0e14;
+    border: 1px solid #1a2332;
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.log-line {
+    color: #c0c0c0;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.log-error {
+    color: #ff4444;
+    font-weight: bold;
+}
+
+.log-warn {
+    color: #ff9800;
+}
+
+.log-success {
+    color: #00ff88;
+}
+
+.log-loading,
+.log-empty {
+    color: #7a8ba8;
+    text-align: center;
+    padding: 20px;
+}
+
+/* ─── Responsive for User Interaction ─── */
+@media (max-width: 768px) {
+    .config-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .config-label {
+        min-width: 120px;
+    }
+
+    .manual-trade-row {
+        flex-wrap: wrap;
+    }
+}

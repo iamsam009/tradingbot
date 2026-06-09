@@ -7,17 +7,23 @@ Usage:
 """
 
 import sys
+import signal
 import logging
+import logging.handlers
 import config
 
 def main():
     """Main entry point."""
-    # Setup logging
+    # Setup logging with rotation (10MB x 5 backup files)
     logging.basicConfig(
         level=config.LOG_LEVEL,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(config.LOG_FILE),
+            logging.handlers.RotatingFileHandler(
+                config.LOG_FILE,
+                maxBytes=10 * 1024 * 1024,  # 10 MB
+                backupCount=5,
+            ),
             logging.StreamHandler()
         ]
     )
@@ -33,7 +39,21 @@ def main():
         # In test mode, we'll use mock data if exchange fails
 
     # Import and run the Flask app
-    from app import app, socketio, initialize_components, start_trading_loop
+    from app import app, socketio, initialize_components, start_trading_loop, shutdown_event, bot_running, state_lock, trade_manager
+
+    # Graceful shutdown handler
+    def _graceful_shutdown(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        with state_lock:
+            bot_running = False
+        shutdown_event.set()
+        if trade_manager:
+            trade_manager._save_history()
+        logger.info("Shutdown complete")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
 
     # Initialize components
     success = initialize_components()
