@@ -72,7 +72,8 @@ def main():
         app,
         host=config.DASHBOARD_HOST,
         port=config.DASHBOARD_PORT,
-        debug=config.DASHBOARD_DEBUG
+        debug=config.DASHBOARD_DEBUG,
+        allow_unsafe_werkzeug=True
     )
 
 

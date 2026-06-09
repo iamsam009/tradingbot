@@ -23,8 +23,7 @@ services:
       - "5000:5000"                   # Dashboard accessible at http://<EC2-IP>:5000
 
     volumes:
-      - ./logs:/app/logs              # Persist logs outside container
-      - ./trading_bot.log:/app/trading_bot.log  # Persist main log file
+      - ./logs:/app/logs              # Persist all logs outside container
 
     # Logging config — rotate logs so disk doesn't fill up
     logging:

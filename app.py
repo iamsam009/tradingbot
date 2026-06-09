@@ -757,7 +757,8 @@ if __name__ == '__main__':
             app,
             host=config.DASHBOARD_HOST,
             port=config.DASHBOARD_PORT,
-            debug=config.DASHBOARD_DEBUG
+            debug=config.DASHBOARD_DEBUG,
+            allow_unsafe_werkzeug=True
         )
     else:
         logger.error("Failed to initialize. Starting dashboard in offline mode.")
@@ -765,5 +766,6 @@ if __name__ == '__main__':
             app,
             host=config.DASHBOARD_HOST,
             port=config.DASHBOARD_PORT,
-            debug=config.DASHBOARD_DEBUG
+            debug=config.DASHBOARD_DEBUG,
+            allow_unsafe_werkzeug=True
         )
